@@ -14,6 +14,9 @@ inputs:
     description: 'Name of the main branch in the repository'
     required: true
     default: "main"
+  github-token:
+    description: 'Github token to use for Git operations'
+    required: true
 runs:
   using: 'docker'
   image: "Dockerfile"
@@ -21,3 +24,4 @@ runs:
     WORKING_DIRECTORY: ${{ inputs.working-directory }}
     CHART_FILE: ${{ inputs.chart-file }}
     MAIN_BRANCH: ${{ inputs.main-branch }}
+    GITHUB_TOKEN: ${{ inputs.github-token }}
