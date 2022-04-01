@@ -9,7 +9,7 @@ inputs:
   chart-file:
     description: 'Name of the file with the chart versions (default chart.yaml'
     required: true
-    default: "chart.yaml"
+    default: "charts.yaml"
   main-branch:
     description: 'Name of the main branch in the repository'
     required: true
