@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/google/uuid"
 
 	version "github.com/hashicorp/go-version"
 	yaml "gopkg.in/yaml.v2"
@@ -119,8 +122,19 @@ func main() {
 
 func Command(inputString string, dir string) []byte {
 
-	log.Print(fmt.Sprintf("$ %s", inputString))
-	input := strings.Split(inputString, " ")
+	MultilineLog(fmt.Sprintf("$ %s", inputString))
+
+	quoted := false
+	input := strings.FieldsFunc(inputString, func(r rune) bool {
+		if r == '"' {
+			quoted = !quoted
+		}
+		return !quoted && r == ' '
+	})
+
+	for i, s := range input {
+		input[i] = strings.Trim(s, `"`)
+	}
 
 	cmd := exec.Command(
 		input[0], input[1:]...,
@@ -130,12 +144,22 @@ func Command(inputString string, dir string) []byte {
 		cmd.Dir = dir
 	}
 
-	outputBytes, err := cmd.Output()
+	var out bytes.Buffer
+	var stderr bytes.Buffer
 
-	Check(err)
-	MultilineLog(string(outputBytes))
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 
-	return outputBytes
+	err := cmd.Run()
+
+	if err != nil {
+		MultilineLog(fmt.Sprint(err) + ": " + stderr.String())
+		log.Fatal(err)
+	}
+
+	MultilineLog("Result: " + out.String())
+
+	return out.Bytes()
 }
 
 func Check(err error) {
@@ -155,9 +179,28 @@ func MultilineLog(input string) {
 
 func PullRequest(charts []Chart, workingDir string) {
 
-	branchName := "tf-helm-update"
+	branchName := fmt.Sprintf("helm-update-%s", uuid.New().String()[0:6])
 	pullRequestTitle := "Bump "
-	pullRequestBody := ""
+	pullRequestBody := "## Terraform Helm Updater\n"
+
+	ghToken := os.Getenv("GITHUB_TOKEN")
+	ghRepo := os.Getenv("GITHUB_REPOSITORY")
+	ghActor := os.Getenv("GITHUB_ACTOR")
+
+	if len(ghToken) == 0 {
+		log.Print("No GitHub token (env GITHUB_TOKEN) provided")
+		os.Exit(1)
+	}
+
+	if len(ghRepo) == 0 {
+		log.Print("No GitHub repository (env GITHUB_REPOSITORY) provided")
+		os.Exit(1)
+	}
+
+	if len(ghActor) == 0 {
+		log.Print("No GitHub actor (env GITHUB_ACTOR) provided")
+		os.Exit(1)
+	}
 
 	for _, chart := range charts {
 		pullRequestTitle += fmt.Sprintf(
@@ -168,7 +211,7 @@ func PullRequest(charts []Chart, workingDir string) {
 		)
 
 		pullRequestBody += fmt.Sprintf(
-			"## Terraform Helm Updater\nBumps %s Helm Chart version from %s to %s.\n",
+			"Bumps %s Helm Chart version from %s to %s.\n",
 			chart.Name,
 			chart.OldVersion,
 			chart.Version,
@@ -189,13 +232,19 @@ func PullRequest(charts []Chart, workingDir string) {
 		os.Exit(0)
 	}
 
+	Command(fmt.Sprintf(`git config user.name "%s"`, ghActor), workingDir)
+	Command(`git config user.email "<>"`, workingDir)
+
 	log.Print(fmt.Sprintf("Creating new branch %s...", branchName))
 	Command(fmt.Sprintf("git checkout -b %s", branchName), workingDir)
 	log.Print("Branch sucessfully created!")
 
 	log.Print("Committing changes to remote branch...")
 	Command("git add -A", workingDir)
-	Command("git commit -m \"Updated chart versions\"", workingDir)
+	Command(
+		`git commit -m "Updated chart versions"`,
+		workingDir,
+	)
 	Command(fmt.Sprintf("git push -u origin %s", branchName), workingDir)
 	log.Print("Successfully pushed changes to remote branch!")
 
@@ -206,13 +255,16 @@ func PullRequest(charts []Chart, workingDir string) {
 	}
 
 	log.Print("Creating pull request...")
-	Command(fmt.Sprintf(
-		"gh pr create -t %s -b %s -B %s -H %s -l \"dependencies\" -l \"github_actions\"",
-		pullRequestTitle,
-		pullRequestBody,
-		mainBranch,
-		branchName,
-	), workingDir)
+	Command(
+		fmt.Sprintf(
+			`gh pr create -t "%s" -b "%s" -B %s -H %s -l "dependencies" -l "github_actions"`,
+			pullRequestTitle,
+			pullRequestBody,
+			mainBranch,
+			branchName,
+		),
+		workingDir,
+	)
 	log.Print("Successfully created pull request!")
 
 }
